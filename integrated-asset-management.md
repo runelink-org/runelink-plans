@@ -1,24 +1,32 @@
 # Integrated asset management
 
+## Terminology
+
+- **Host:** a Runelink deployment, which would conventionally be called a server. Machines, processes, and deployments are always hosts in this document.
+- **Server:** a conceptual server, meaning a community that lives on exactly one host. "Server" never refers to a machine or process, except in the common phrase "server-side" for compute as opposed to client-side.
+- **Home host:** the single host on which a user's account exists.
+- **Owning host:** the host that is authoritative for a resource. It may also be named for the resource, such as the **channel host** for a channel or the asset's owning host for an asset.
+- **Peer host:** another host participating in federation.
+
 ## Direction and confirmed decisions
 
 - Runelink is an extensible, encompassing federated network. Aim for XMPP's technical merit and performance with Discord's ease of use and simplicity.
-- Asset management is integrated into the core server and client experience, closer to Matrix's media repository than optional XMPP extensions. Basic attachments must work on a fresh server without configuring an external service.
+- Asset management is integrated into the core host and client experience, closer to Matrix's media repository than optional XMPP extensions. Basic attachments must work on a fresh host without configuring an external service.
 - Local filesystem storage is the default. Configuring S3-compatible storage should be simple and should not change asset IDs or client behavior.
-- Each server belongs to one host. Channels have an owning host, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
-- Remote users make application requests through their home host. Their home host makes authenticated federation requests on their behalf; clients do not call the channel owner's API directly.
+- Each server belongs to exactly one host. Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
+- Remote users make application requests through their home host. Their home host makes authenticated federation requests on their behalf; clients do not call the channel host's API directly.
 - Assets have permanent IDs. Clients request short-lived signed download URLs through their home host, cache them, and refresh expired URLs when needed, potentially in bulk.
 - A permanent asset ID identifies the entire logical upload, including its normalized original and every generated representation. At the bottom are immutable blobs of bytes. Intermediate structure and storage granularity depend on media type; their names, hierarchy, and database mapping are not fixed.
 - For supported media, the default **Download** action returns a standardized, broadly compatible version. **Download original** returns the metadata-normalized source without media re-encoding. Generic files without a normalized download representation use the original for Download.
-- Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or server. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
-- Peer servers also request URLs on behalf of remote channel members and cache those URLs.
+- Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
+- Peer hosts also request URLs on behalf of remote channel members and cache those URLs.
 - Local storage must support the equivalent upload allocation and download signing behavior itself.
 - Assets are first-class resources and may exist independently of messages. Their metadata is **global to the asset**, never per-message or per-use. Asset creation may happen alongside message creation without making metadata part of the message.
 - Standard metadata includes MIME type, description, and alt text, plus a generic JSON object for arbitrary custom metadata. Prefer the name `custom`; the exact name is not finalized.
 - Anyone permitted to edit asset metadata can view and edit all of it. The core does not reserve extension namespaces or require registered custom schemas. Extensions may namespace their own keys voluntarily.
 - Store metadata in the database to support efficient queries such as filtering by MIME type. Add specialized tables where media-specific relationships and query patterns justify them.
 - The first implementation treats all assets as generic files with generic metadata. The design must accommodate image resolutions, thumbnails for multiple media types, and HLS video variants with optional multilingual audio and subtitles.
-- Media processing should work locally with FFmpeg by default. HLS processing must eventually support optionally configured compute infrastructure separate from the API server.
+- Media processing should work locally with FFmpeg by default. HLS processing must eventually support optionally configured compute infrastructure separate from the host's API process.
 - Video support must accommodate full-length movies, including resumable large transfers, durable background processing, seeking, and uninterrupted authorization renewal during long playback.
 
 ## Proposed implementation shape
@@ -31,7 +39,7 @@ The following records the implementation approach discussed. Exact schemas, endp
 - Use permanent, owner-resolvable asset IDs. Never reuse an ID after deletion; a permanent identifier does not promise permanent byte retention. The URI syntax is still open.
 - Publish the normalized original as immutable bytes while allowing global descriptive metadata to change. Replacing original content creates a new asset; generating or rebuilding derivatives preserves the existing asset ID and creates new immutable outputs.
 - Store common searchable fields in typed columns. Use PostgreSQL `jsonb` for `custom`, bounded by size and nesting limits. Arbitrary custom keys need not be indexed or queryable through a general-purpose public query API.
-- Distinguish editable descriptive metadata from server-verified technical facts. Preserve declared and detected MIME types separately; use verified properties for serving and processing decisions. Keep canonical MIME types normalized and codec details separate.
+- Distinguish editable descriptive metadata from host-verified technical facts. Preserve declared and detected MIME types separately; use verified properties for serving and processing decisions. Keep canonical MIME types normalized and codec details separate.
 - Record technical facts for the actual representation being served. An asset can encompass several MIME types, dimensions, and codecs; the searchable asset-level MIME type should describe its normalized original rather than imply that all representations share a format.
 - Track metadata versions and use optimistic concurrency for updates. Remote metadata caches should refresh independently of URL caches.
 - Record the storage backend and private key per blob. Changing the configured backend affects new uploads; existing blobs remain readable. Background migration can move bytes without changing asset IDs.
@@ -50,14 +58,14 @@ The model must support the following responsibilities without committing to inte
 
 ### Original normalization and download behavior
 
-- Normalize sensitive embedded metadata before publishing the original. The owning host is responsible for ensuring its normalization policy has been applied, whether normalization happens on the client, server, or both.
+- Normalize sensitive embedded metadata before publishing the original. The owning host is responsible for ensuring its normalization policy has been applied, whether normalization happens on the client, owning host, or both.
 - Metadata normalization must not re-encode image, video, or audio content. Container or metadata rewriting may change file bytes and size without changing encoded media content.
 - Distinguish sensitive capture dates and location timestamps from timing required for playback, synchronization, and subtitles. Preserve interpretation information such as orientation, color profiles, and HDR signaling when needed to display unchanged media correctly.
 - Embedded file metadata is separate from editable asset descriptions, alt text, and `custom`. Removing embedded fields does not remove those database fields.
 - Verify upload integrity separately from the digest of the retained normalized original. Preserve the source filename for original downloads and use an appropriate extension for generated downloads.
 - Clients resolve the permanent asset ID for a purpose such as original access, default download, preview, or playback. Available purposes and their internal structure depend on media type; clients do not need to understand storage layout.
 - Durable sharing links may select original access or another supported purpose without introducing a new top-level asset ID. Resolve them through normal authorization rather than persisting expiring byte URLs.
-- Keep default representation selection under server control, outside user-editable metadata. Defaults may move to new immutable outputs without changing asset identity.
+- Keep default representation selection under owning-host control, outside user-editable metadata. Defaults may move to new immutable outputs without changing asset identity.
 - Publish availability independently. Once validated and normalized, the original can be attached to a message and downloaded while derivatives are processing. Show processing or failure for an unavailable default download rather than silently changing its format to the original.
 - Define media-specific normalization profiles for default downloads and previews, including quality, resolution, frame rate, color, HDR, transparency, animation, embedded metadata, and audio/subtitle handling. Do not upscale or discard visible content characteristics merely to force every image into one format.
 - H.264/AAC MP4 is a candidate default video download format, not a finalized profile. Image downloads may need different formats for photos, lossless images, transparency, and animation. Exact format choices, resolution caps, HDR policy, and track selection remain open.
@@ -74,8 +82,8 @@ The model must support the following responsibilities without committing to inte
 
 - Make allocation, completion, and message publication idempotent. Use unique object keys and prevent a reusable upload capability from modifying published bytes, including after completion.
 - Support resumable uploads with local storage and multipart or equivalent resumable transfers with S3. Transfer state must survive interrupted connections without requiring movie-sized files to restart from zero.
-- Authenticate federation peers and verify that a peer may represent the claimed user. A valid peer identity alone does not grant asset access.
-- Keep the owner authoritative for asset authorization. Message visibility may supply access context, but assets also need standalone grants. Precise grant types and peer delegation rules remain open.
+- Authenticate peer hosts and verify that a peer host may represent the claimed user. A valid peer host identity alone does not grant asset access.
+- Keep the owning host authoritative for asset authorization. Message visibility may supply access context, but assets also need standalone grants. Precise grant types and peer host delegation rules remain open.
 - Bulk resolution groups requests by owning host and returns per-asset results. Scope authorization caches correctly; a cached URL must not authorize a different user implicitly.
 
 ### Delivery and caching
@@ -83,8 +91,8 @@ The model must support the following responsibilities without committing to inte
 - Return explicit URL expiry timestamps. Refresh lazily for needed assets, allow a clock-skew margin, coalesce concurrent refreshes, and use bounded retry after expiry failures.
 - Never persist expiring delivery URLs in messages or permanent asset records. Keep signatures out of logs and analytics.
 - Separate metadata, authorization, delivery-URL, and immutable-byte caches. URL expiry neither deletes cached bytes nor revokes copies already obtained.
-- Support peer byte caching and streaming for local-storage federation. Check access before serving cached bytes.
-- A client-facing delivery URL may point to object storage or a home-host media endpoint. Passing an owner-local URL directly to a remote client would conflict with the home-host routing requirement.
+- Support peer host byte caching and streaming for local-storage federation. Check access before serving cached bytes.
+- A client-facing delivery URL may point to object storage or a home-host media endpoint. Passing a URL local to the owning host directly to a remote client would conflict with the home-host routing requirement.
 - Define whether direct S3/CDN byte transfers are an exception to the all-requests-through-home-host rule. Proxying preserves the strict rule but adds bandwidth costs. This distinction applies to uploads and HLS as well as downloads.
 - Support HTTP ranges for large files and playback. Use bounded streaming and backpressure rather than buffering whole files in the API process.
 - Renew delivery authorization during long playback and resumed downloads without restarting the media. Account for expiry of child requests as well as the initial manifest or file URL.
@@ -118,7 +126,7 @@ The model must support the following responsibilities without committing to inte
 ## Initial scope and follow-on work
 
 1. Implement generic assets, database metadata, standalone authorization, immutable original storage, required source-metadata normalization, metadata versioning, and upload lifecycle.
-2. Provide integrated local storage, federated uploads/downloads, and bulk signed-URL resolution with client and peer caches.
+2. Provide integrated local storage, federated uploads/downloads, and bulk signed-URL resolution with client and peer host caches.
 3. Add simple S3-compatible configuration and backend migration support without changing asset identity.
 4. Add durable derivative-processing jobs and thumbnails, followed by image-size variants and standardized media downloads with a separate Download original action.
 5. Add adaptive video playback, HLS delivery authorization, multilingual audio/subtitles, movie-length processing and transfer support, and optional external compute.

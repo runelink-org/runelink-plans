@@ -8,21 +8,21 @@ The central architecture is established: the host that owns a voice channel mana
 
 ### Terminology
 
-- **Host:** a Runelink deployment, identified by its host name and port, that operates any number of servers. A single `runelink-server` process may run several hosts in cluster mode.
+- **Host:** a Runelink deployment, which would conventionally be called a server, identified by its host name and port. A host operates any number of servers. Machines, processes, and deployments are always hosts in this document; a single `runelink-server` process may run several hosts in cluster mode.
 - **Home host:** the single host on which a user's account exists. Users are identified by a `UserRef` of name and host.
-- **Server:** a community that lives on exactly one host.
-- **Owning host:** the host that is authoritative for a resource. A server channel's owning host is the host of its server. A DM channel is owned by a single host ([#24](https://github.com/runelink-org/runelink/issues/24)).
+- **Server:** a conceptual server, meaning a community that lives on exactly one host. "Server" never refers to a machine or process, except in the common phrase "server-side" for compute as opposed to client-side.
+- **Owning host:** the host that is authoritative for a resource. It may also be named for the resource, such as the **channel host** or **voice channel host**. A server channel's owning host is the host of its server. A DM channel is owned by a single host ([#24](https://github.com/runelink-org/runelink/issues/24)).
 - **Underlying channel:** a minimal protocol resource with a stable ID and no presentation metadata. `text_channels` contain messages; `voice_channels` contain calls and call events.
 - **Presentation channel:** a resource that gives underlying channels ownership and presentation. `server_channels` form a server's category tree, and `dm_channels` represent one-to-one and group DMs.
 - **Call:** a single session within a voice channel, identified by a call ID that is distinct from the voice channel ID.
-- **SFU:** Selective Forwarding Unit, a media server that forwards encoded media streams between participants without decoding them.
+- **SFU:** Selective Forwarding Unit, a media service operated by a host that forwards encoded media streams between participants without decoding them.
 
 ### Ownership and federation
 
 - Every resource has exactly one owning host, which is authoritative for that resource.
 - Federation enables communication between hosts without distributing ownership of individual resources.
 - Clients authenticate only with their home host. End-user credentials are never shared with other hosts.
-- Requests for resources on another host are sent to the home host with a target host. The home host forwards them over federation using server-to-server requests authenticated by short-lived JWTs, which remote hosts verify against the keys published at `/.well-known/jwks.json`.
+- Requests for resources on another host are sent to the home host with a target host. The home host forwards them over federation using host-to-host requests authenticated by short-lived JWTs, which remote hosts verify against the keys published at `/.well-known/jwks.json`.
 
 ### Channels
 
@@ -58,7 +58,7 @@ Call media follows a different path from all other federated traffic. Signaling 
 - WebRTC does not define a call-signaling protocol; Runelink defines its own (see [Call signaling](#call-signaling)).
 - Use established WebRTC libraries rather than implementing media transport.
 
-### Media server
+### Selective forwarding unit
 
 **Decision:** Use a centralized SFU model.
 
@@ -176,7 +176,7 @@ These are recommendations rather than decisions.
 
 | Area | Open question | Existing constraints |
 | --- | --- | --- |
-| SFU implementation | Which existing SFU library or framework should be used? | The server is written in Rust. |
+| SFU implementation | Which existing SFU library or framework should be used? | The host implementation, `runelink-server`, is written in Rust. |
 | SFU deployment | Should the SFU run inside the host process or as a separate service? | |
 | SFU authentication | How do clients authenticate directly with a remote owning host's SFU? | Clients authenticate only with their home host and must not present their credentials to other hosts. Federation authenticates hosts with short-lived JWTs verified through JWKS. |
 | Signaling | What call lifecycle states and signaling messages should the protocol define? | Messages are request, reply, and update types under versioned capabilities. |
