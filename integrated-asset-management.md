@@ -12,7 +12,7 @@
 
 - Runelink is an extensible, encompassing federated network. Aim for XMPP's technical merit and performance with Discord's ease of use and simplicity.
 - Asset management is integrated into the core host and client experience, closer to Matrix's media repository than optional XMPP extensions. Basic attachments must work on a fresh host without configuring an external service.
-- Local filesystem storage is the default. Configuring S3-compatible storage should be simple and should not change asset IDs or client behavior.
+- Storage backends implement a common server-side Rust trait, so new backends are easy to add. Local filesystem storage is the default backend and works without manual configuration. A host may instead configure another supported backend, initially S3-compatible object storage. Configuring a backend should be simple and must not change asset IDs or client behavior.
 - Each server belongs to exactly one host. Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
 - Remote users make application requests through their home host. Their home host makes authenticated federation requests on their behalf; clients do not call the channel host's API directly.
 - Assets have permanent IDs. Clients request short-lived signed download URLs through their home host, cache them, and refresh expired URLs when needed, potentially in bulk.
@@ -20,7 +20,7 @@
 - For supported media, the default **Download** action returns a standardized, broadly compatible version. **Download original** returns the metadata-normalized source without media re-encoding. Generic files without a normalized download representation use the original for Download.
 - Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
 - Peer hosts also request URLs on behalf of remote channel members and cache those URLs.
-- Local storage must support the equivalent upload allocation and download signing behavior itself.
+- Every backend, including local storage, returns compatible signed URLs for uploads and downloads. The storage abstraction exists only on the server; clients use signed URLs the same way regardless of which backend, host endpoint, or CDN they point to.
 - Assets are first-class resources and may exist independently of messages. Their metadata is **global to the asset**, never per-message or per-use. Asset creation may happen alongside message creation without making metadata part of the message.
 - Standard metadata includes MIME type, description, and alt text, plus a generic JSON object for arbitrary custom metadata. Prefer the name `custom`; the exact name is not finalized.
 - Anyone permitted to edit asset metadata can view and edit all of it. The core does not reserve extension namespaces or require registered custom schemas. Extensions may namespace their own keys voluntarily.
@@ -42,6 +42,7 @@ The following records the implementation approach discussed. Exact schemas, endp
 - Distinguish editable descriptive metadata from host-verified technical facts. Preserve declared and detected MIME types separately; use verified properties for serving and processing decisions. Keep canonical MIME types normalized and codec details separate.
 - Record technical facts for the actual representation being served. An asset can encompass several MIME types, dimensions, and codecs; the searchable asset-level MIME type should describe its normalized original rather than imply that all representations share a format.
 - Track metadata versions and use optimistic concurrency for updates. Remote metadata caches should refresh independently of URL caches.
+- The storage backend trait produces signed upload and download URLs with explicit expiry that behave compatibly across backends, including resumable uploads and ranged downloads. Backend-specific mechanisms, such as presigned or multipart object-storage operations, stay behind the trait and must not change client behavior. The exact trait methods remain open.
 - Record the storage backend and private key per blob. Changing the configured backend affects new uploads; existing blobs remain readable. Background migration can move bytes without changing asset IDs.
 - Internal blob deduplication and reuse across representations must not merge asset permissions or metadata.
 
@@ -76,12 +77,12 @@ The model must support the following responsibilities without committing to inte
 
 1. Allocate an asset and upload session through the user's home host; forward to the channel host for channel attachments.
 2. The owning host checks permissions and quotas and returns transfer instructions with expiry and required headers.
-3. Transfer to S3 using presigned operations, or stream to local storage. Remote filesystem transfers pass through the user's home host and authenticated federation.
+3. Transfer using the signed URLs returned by the configured storage backend, such as presigned object-storage operations or a host upload endpoint for local storage. Remote filesystem transfers pass through the user's home host and authenticated federation.
 4. Complete through the same application request path. Verify object existence, size, digest, session ownership, and actual stored content. Apply or verify required metadata normalization before publishing the immutable original.
 5. Attach the asset once its original is ready or retain it as an independently authorized asset. Derivative generation can continue after publication.
 
 - Make allocation, completion, and message publication idempotent. Use unique object keys and prevent a reusable upload capability from modifying published bytes, including after completion.
-- Support resumable uploads with local storage and multipart or equivalent resumable transfers with S3. Transfer state must survive interrupted connections without requiring movie-sized files to restart from zero.
+- Support resumable uploads with every backend, using multipart or equivalent operations where external storage provides them. Transfer state must survive interrupted connections without requiring movie-sized files to restart from zero.
 - Authenticate peer hosts and verify that a peer host may represent the claimed user. A valid peer host identity alone does not grant asset access.
 - Keep the owning host authoritative for asset authorization. Message visibility may supply access context, but assets also need standalone grants. Precise grant types and peer host delegation rules remain open.
 - Bulk resolution groups requests by owning host and returns per-asset results. Scope authorization caches correctly; a cached URL must not authorize a different user implicitly.
@@ -92,8 +93,8 @@ The model must support the following responsibilities without committing to inte
 - Never persist expiring delivery URLs in messages or permanent asset records. Keep signatures out of logs and analytics.
 - Separate metadata, authorization, delivery-URL, and immutable-byte caches. URL expiry neither deletes cached bytes nor revokes copies already obtained.
 - Support peer host byte caching and streaming for local-storage federation. Check access before serving cached bytes.
-- A client-facing delivery URL may point to object storage or a home-host media endpoint. Passing a URL local to the owning host directly to a remote client would conflict with the home-host routing requirement.
-- Define whether direct S3/CDN byte transfers are an exception to the all-requests-through-home-host rule. Proxying preserves the strict rule but adds bandwidth costs. This distinction applies to uploads and HLS as well as downloads.
+- A signed delivery URL may point to external storage, a CDN, or a home-host media endpoint, and clients treat all of them the same way. Passing a URL local to the owning host directly to a remote client would conflict with the home-host routing requirement.
+- Define whether direct external storage/CDN byte transfers are an exception to the all-requests-through-home-host rule. Proxying preserves the strict rule but adds bandwidth costs. This distinction applies to uploads and HLS as well as downloads.
 - Support HTTP ranges for large files and playback. Use bounded streaming and backpressure rather than buffering whole files in the API process.
 - Renew delivery authorization during long playback and resumed downloads without restarting the media. Account for expiry of child requests as well as the initial manifest or file URL.
 
@@ -114,7 +115,7 @@ The model must support the following responsibilities without committing to inte
 
 ### Lifecycle and operations
 
-- Ship sensible upload limits, quotas, safe download headers, temporary-file handling, and cleanup with local storage. Expose simple S3 configuration for bucket, region, endpoint, credentials, and compatible addressing.
+- Ship sensible upload limits, quotas, safe download headers, temporary-file handling, and cleanup with local storage. Expose simple configuration for each supported external backend, such as bucket, region, endpoint, credentials, and compatible addressing for S3.
 - Account for original storage, generated downloads, streaming outputs, and processing costs on the owning host. Include duration, dimensions, frame rate, and track-count limits alongside upload-byte limits; bound temporary processing storage separately.
 - Keep incomplete-upload expiry separate from standalone-asset retention. **An asset without a message reference is not automatically an abandoned asset.**
 - Define retention, deletion, quarantine, reference removal, and tombstones explicitly. Garbage collection must respect standalone retention and all live uses.
@@ -127,7 +128,7 @@ The model must support the following responsibilities without committing to inte
 
 1. Implement generic assets, database metadata, standalone authorization, immutable original storage, required source-metadata normalization, metadata versioning, and upload lifecycle.
 2. Provide integrated local storage, federated uploads/downloads, and bulk signed-URL resolution with client and peer host caches.
-3. Add simple S3-compatible configuration and backend migration support without changing asset identity.
+3. Add S3-compatible storage as the first supported external backend, with simple configuration and backend migration support that preserve asset identity and client behavior.
 4. Add durable derivative-processing jobs and thumbnails, followed by image-size variants and standardized media downloads with a separate Download original action.
 5. Add adaptive video playback, HLS delivery authorization, multilingual audio/subtitles, movie-length processing and transfer support, and optional external compute.
 

@@ -41,13 +41,13 @@ As decided in [#37](https://github.com/runelink-org/runelink/issues/37) and bein
 - Capabilities describe protocol compatibility, not authorization. Permissions are a separate, many-to-many policy system.
 - Message bodies are plain text by default, with optional metadata for richer content.
 - Durable content mutations and ephemeral state, such as presence ([#28](https://github.com/runelink-org/runelink/issues/28)), are modeled separately.
-- Media assets are owned by channels and stored through external storage/CDN infrastructure.
-- Federation exchanges asset metadata rather than transferring large files between hosts.
+- Assets are owned by a host; channel attachments are owned by the channel host. Hosts store assets through a common server-side storage backend trait, with local filesystem storage as the default and other supported backends configurable. Every backend returns compatible signed URLs, so clients do not depend on where the bytes are stored. See [Integrated asset management](integrated-asset-management.md).
+- Asset requests follow normal home-host routing. Whether clients may transfer asset bytes directly from external storage or a CDN remains open.
 - Stored media may use formats such as HLS, independently of the real-time calling system.
 
 ## Media architecture
 
-Call media follows a different path from all other federated traffic. Signaling travels from each client through its home host and federation to the voice channel's owning host, while media travels directly between each client and the SFU operated by the owning host.
+Call media does not follow the home-host routing used for other federated traffic. Signaling travels from each client through its home host and federation to the voice channel's owning host, while media travels directly between each client and the SFU operated by the owning host.
 
 ### Media transport
 
@@ -64,7 +64,7 @@ Call media follows a different path from all other federated traffic. Signaling 
 
 - The owning host of a voice channel operates the SFU for that channel's calls.
 - Participants connect directly to the owning host's SFU for WebRTC media, including when it is not their home host.
-- This is an explicit exception to the rule that clients communicate only with their home host. It applies to call media only.
+- This is an explicit exception to the rule that clients communicate only with their home host. It covers call media; whether direct asset byte transfers form a similar exception is open in [Integrated asset management](integrated-asset-management.md).
 - Home hosts do not relay or process their users' call media.
 - The SFU forwards media streams without decoding, mixing, or re-encoding them.
 - Clients receive the relevant audio streams and mix them locally.
