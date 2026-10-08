@@ -1,5 +1,7 @@
 # Integrated asset management
 
+This plan records the direction for integrated asset storage, delivery, and media processing ([#9](https://github.com/runelink-org/runelink/issues/9)).
+
 ## Terminology
 
 - **Host:** a Runelink deployment, which would conventionally be called a server. Machines, processes, and deployments are always hosts in this document.
@@ -16,11 +18,13 @@
 - Each server belongs to exactly one host. Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
 - Remote users make application requests through their home host. Their home host makes authenticated federation requests on their behalf; clients do not call the channel host's API directly.
 - Asset bytes are an explicit exception to home-host routing, as call media is. Signed URLs and their authorization are handled up front through the home host. The owning host never sends signed URLs to clients directly; the home host delivers them over the client's persistent WebSocket connection, or over its regular HTTP API. Clients then upload and download bytes directly from the endpoints the owning host designates. Home hosts do not relay asset bytes.
-- Assets have permanent IDs. Clients request short-lived signed download URLs through their home host, cache them, and refresh expired URLs when needed, potentially in bulk.
+- Assets have permanent IDs that map to short-lived signed URLs, valid for about five minutes. Each user receives their own unique signed URL for rate limiting and auditing.
+- Home hosts request signed URLs automatically when fetching content that references assets. Clients can also request and refresh URLs through their home host, potentially in bulk.
+- Access is checked when signed URLs or other credentials are issued, when they are renewed, and whenever a change makes re-checking feasible. Short URL lifetimes bound how long revoked access remains usable.
 - A permanent asset ID identifies the entire logical upload, including its normalized original and every generated representation. At the bottom are immutable blobs of bytes. Intermediate structure and storage granularity depend on media type; their names, hierarchy, and database mapping are not fixed.
 - For supported media, the default **Download** action returns a standardized, broadly compatible version. **Download original** returns the metadata-normalized source without media re-encoding. Generic files without a normalized download representation use the original for Download.
 - Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
-- Peer hosts also request URLs on behalf of remote channel members and cache those URLs.
+- Home hosts request URLs from owning hosts on behalf of their users and cache them per user. One user's signed URL is never served to another user.
 - Every backend, including local storage, returns compatible signed URLs for uploads and downloads. The storage abstraction exists only on the server; clients use signed URLs the same way regardless of which backend, host endpoint, or CDN they point to.
 - Assets are first-class resources and may exist independently of messages. Their metadata is **global to the asset**, never per-message or per-use. Asset creation may happen alongside message creation without making metadata part of the message.
 - Standard metadata includes MIME type, description, and alt text, plus a generic JSON object for arbitrary custom metadata. Prefer the name `custom`; the exact name is not finalized.
@@ -90,13 +94,20 @@ The model must support the following responsibilities without committing to inte
 
 ### Delivery and caching
 
-- Return explicit URL expiry timestamps. Refresh lazily for needed assets, allow a clock-skew margin, coalesce concurrent refreshes, and use bounded retry after expiry failures.
+- Return explicit URL expiry timestamps. Refresh lazily for needed assets, renew before expiry during active use, allow a clock-skew margin, coalesce concurrent refreshes, and use bounded retry after expiry failures.
 - Never persist expiring delivery URLs in messages or permanent asset records. Keep signatures out of logs and analytics.
 - Separate metadata, authorization, delivery-URL, and immutable-byte caches. URL expiry neither deletes cached bytes nor revokes copies already obtained.
+- Key byte caches by asset and representation rather than by signed URL, so per-user URLs do not defeat byte caching. CDNs in front of external storage should exclude signatures from their cache keys.
+- Home hosts may serve cached remote content, such as messages from the content cache ([#26](https://github.com/runelink-org/runelink/issues/26)), before they have the requesting user's signed URLs. Send the content immediately, then push the asset-to-URL mapping to the client as an update once the owning host returns it.
+- Owning hosts may rate limit signed URL issuance per user. Local storage endpoints may also rate limit downloads; issuance is the main control for external backends that cannot limit per URL.
 - A signed delivery URL may point to the owning host's external storage, CDN, or media endpoint, and clients treat all of them the same way.
 - Uploads, downloads, and HLS all transfer bytes directly between clients and those endpoints, including for remote users. Only URL issuance and authorization pass through the home host.
 - Support HTTP ranges for large files and playback. Use bounded streaming and backpressure rather than buffering whole files in the API process.
 - Renew delivery authorization during long playback and resumed downloads without restarting the media. Account for expiry of child requests as well as the initial manifest or file URL.
+- URL expiry applies when a request starts; transfers already in progress may continue. New requests, such as resumed ranges and subsequent HLS segments, need a current URL.
+- Explicit downloads to disk should survive interruptions such as connection blips. Desktop, mobile, and CLI/TUI clients are planned surfaces for resumable downloads. Pin the specific representation with its size and digest, keep the partially downloaded bytes, and resume with a range request and a freshly issued URL. Verify the size and digest on completion. Resuming must not switch to a newer default representation.
+- Small in-memory views can simply restart, and long media playback uses HLS.
+- Resumable web downloads are deferred until after the initial implementation. Until then, web clients use regular browser downloads and can offer a copyable CLI download command for large files.
 
 ### Media processing and HLS
 
@@ -111,7 +122,7 @@ The model must support the following responsibilities without committing to inte
 - HLS delivery must describe manifests, quality variants, audio, subtitles, and segments, with enough inventory information for completeness checks and cleanup. Individual database rows for segments or other streaming components are optional. Choose representation boundaries, packaging, and inventory mechanisms based on media-specific needs and performance measurements.
 - New codecs, qualities, or track selections may produce new immutable playback outputs that reuse existing bytes. Updating the asset's playback default should allow active clients to finish using the prior output under a defined retirement policy.
 - HLS needs package/session delivery authorization. Signing only the master playlist does not authorize its children, and query signatures are not automatically inherited by relative segment URLs.
-- Keep generated manifests free of permanently embedded expiring URLs. Evaluate a media gateway with path-scoped capabilities, CDN authorization, or manifest rewriting. Final HLS delivery mechanism remains open.
+- Keep generated manifests free of permanently embedded expiring URLs. Evaluate a media gateway with path-scoped capabilities, CDN authorization, or manifest rewriting. One candidate: the home host delivers a short-lived token scoped to a playback output, the owning host's media endpoint propagates it to child URLs when serving playlists, and the client renews it through the home host. Final HLS delivery mechanism remains open.
 
 ### Lifecycle and operations
 

@@ -66,6 +66,8 @@ Like asset bytes, call media does not follow the home-host routing used for othe
 - The owning host of a voice channel operates the SFU for that channel's calls.
 - Participants connect directly to the owning host's SFU for WebRTC media, including when it is not their home host.
 - This is the bulk data exception to the rule that clients communicate only with their home host, which also covers asset bytes. Signaling and authorization still go through the home host up front.
+- Clients join the SFU with short-lived, single-use join tokens obtained through their home host. Access is checked when a token is issued and re-checked on every reconnect, which requires a new token.
+- Once a participant is connected, the owning host's SFU session is authoritative. The owning host removes participants immediately when they lose access to the call.
 - Home hosts do not relay or process their users' call media.
 - The SFU forwards media streams without decoding, mixing, or re-encoding them.
 - Clients receive the relevant audio streams and mix them locally.
