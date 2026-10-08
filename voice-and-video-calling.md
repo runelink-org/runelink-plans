@@ -4,51 +4,16 @@ This plan records the architectural decisions for Runelink voice calls, video, c
 
 The central architecture is established: the host that owns a voice channel manages its calls, the existing federation protocol carries call signaling, and WebRTC connects each client directly to the owning host's SFU for media. This preserves the existing ownership model while avoiding the bandwidth and compute cost of routing real-time media through each participant's home host.
 
-## Existing model
+Shared terminology, ownership, federation, channel, and protocol concepts are defined in [Runelink architecture](architecture.md). Stored media, such as HLS video, is handled by [Integrated asset management](integrated-asset-management.md) independently of real-time calling.
 
-### Terminology
+## Terminology
 
-- **Host:** a Runelink deployment, which would conventionally be called a server, identified by its host name and port. A host operates any number of servers. Machines, processes, and deployments are always hosts in this document; a single `runelink-server` process may run several hosts in cluster mode.
-- **Home host:** the single host on which a user's account exists. Users are identified by a `UserRef` of name and host.
-- **Server:** a conceptual server, meaning a community that lives on exactly one host. "Server" never refers to a machine or process, except in the common phrase "server-side" for compute as opposed to client-side.
-- **Owning host:** the host that is authoritative for a resource. It may also be named for the resource, such as the **channel host** or **voice channel host**. A server channel's owning host is the host of its server. A DM channel is owned by a single host ([#24](https://github.com/runelink-org/runelink/issues/24)).
-- **Underlying channel:** a minimal protocol resource with a stable ID and no presentation metadata. `text_channels` contain messages; `voice_channels` contain calls and call events.
-- **Presentation channel:** a resource that gives underlying channels ownership and presentation. `server_channels` form a server's category tree, and `dm_channels` represent one-to-one and group DMs.
 - **Call:** a single session within a voice channel, identified by a call ID that is distinct from the voice channel ID.
 - **SFU:** Selective Forwarding Unit, a media service operated by a host that forwards encoded media streams between participants without decoding them.
 
-### Ownership and federation
-
-- Every resource has exactly one owning host, which is authoritative for that resource.
-- Federation enables communication between hosts without distributing ownership of individual resources.
-- Clients authenticate only with their home host. End-user credentials are never shared with other hosts.
-- Bulk data, meaning call media and asset bytes, is an explicit exception to home-host routing. Home hosts handle signaling, authorization, and credential or signed URL issuance up front. Owning hosts never send credentials or signed URLs to clients directly; the home host delivers them over the client's persistent WebSocket connection, or over its regular HTTP API. Clients then transfer the data directly with endpoints designated by the owning host.
-- Requests for resources on another host are sent to the home host with a target host. The home host forwards them over federation using host-to-host requests authenticated by short-lived JWTs, which remote hosts verify against the keys published at `/.well-known/jwks.json`.
-
-### Channels
-
-As decided in [#37](https://github.com/runelink-org/runelink/issues/37) and being implemented in [#30](https://github.com/runelink-org/runelink/issues/30):
-
-- Text channels and voice channels are separate underlying resources with separate IDs.
-- Server channels have a `kind`. The initial kinds are `text` and `category`; server voice channels will be added as a `voice` kind that owns an underlying voice channel.
-- Each DM channel owns both an underlying text channel and an underlying voice channel. One-to-one and group calls therefore take place in the DM channel's voice channel.
-- Server channel IDs remain stable regardless of their position in the category tree.
-- Categories may be nested to arbitrary depth. Presentation limits are the responsibility of clients, not the protocol.
-
-### Messaging and assets
-
-- Clients and hosts, and federated hosts, communicate over persistent WebSocket connections. Traffic consists of requests, replies, and push-only updates. Clients can also use a regular HTTP API with their home host.
-- Operations are grouped into independently versioned capabilities. Each WebSocket connection negotiates them through `hello` and `welcome` envelopes, and operations whose capabilities were not negotiated remain unavailable.
-- Capabilities describe protocol compatibility, not authorization. Permissions are a separate, many-to-many policy system.
-- Message bodies are plain text by default, with optional metadata for richer content.
-- Durable content mutations and ephemeral state, such as presence ([#28](https://github.com/runelink-org/runelink/issues/28)), are modeled separately.
-- Assets are owned by a host; channel attachments are owned by the channel host. Hosts store assets through a common server-side storage backend trait, with local filesystem storage as the default and other supported backends configurable. Every backend returns compatible signed URLs, so clients do not depend on where the bytes are stored. See [Integrated asset management](integrated-asset-management.md).
-- Asset requests and signed URLs go through the home host. Clients then transfer asset bytes directly with the owning host's storage endpoints.
-- Stored media may use formats such as HLS, independently of the real-time calling system.
-
 ## Media architecture
 
-Like asset bytes, call media does not follow the home-host routing used for other federated traffic. Signaling travels from each client through its home host and federation to the voice channel's owning host, while media travels directly between each client and the SFU operated by the owning host.
+Call media falls under the [bulk data exception](architecture.md#bulk-data-exception) to home-host routing. Signaling travels from each client through its home host and federation to the voice channel's owning host, while media travels directly between each client and the SFU operated by the owning host.
 
 ### Media transport
 
@@ -65,7 +30,6 @@ Like asset bytes, call media does not follow the home-host routing used for othe
 
 - The owning host of a voice channel operates the SFU for that channel's calls.
 - Participants connect directly to the owning host's SFU for WebRTC media, including when it is not their home host.
-- This is the bulk data exception to the rule that clients communicate only with their home host, which also covers asset bytes. Signaling and authorization still go through the home host up front.
 - Clients join the SFU with short-lived, single-use join tokens obtained through their home host. Access is checked when a token is issued and re-checked on every reconnect, which requires a new token.
 - Once a participant is connected, the owning host's SFU session is authoritative. The owning host removes participants immediately when they lose access to the call.
 - Home hosts do not relay or process their users' call media.

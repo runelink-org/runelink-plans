@@ -1,26 +1,15 @@
 # Integrated asset management
 
-This plan records the direction for integrated asset storage, delivery, and media processing ([#9](https://github.com/runelink-org/runelink/issues/9)).
-
-## Terminology
-
-- **Host:** a Runelink deployment, which would conventionally be called a server. Machines, processes, and deployments are always hosts in this document.
-- **Server:** a conceptual server, meaning a community that lives on exactly one host. "Server" never refers to a machine or process, except in the common phrase "server-side" for compute as opposed to client-side.
-- **Home host:** the single host on which a user's account exists.
-- **Owning host:** the host that is authoritative for a resource. It may also be named for the resource, such as the **channel host** for a channel or the asset's owning host for an asset.
-- **Peer host:** another host participating in federation.
+This plan records the direction for integrated asset storage, delivery, and media processing ([#9](https://github.com/runelink-org/runelink/issues/9)). Shared terminology and architecture are defined in [Runelink architecture](architecture.md).
 
 ## Direction and confirmed decisions
 
-- Runelink is an extensible, encompassing federated network. Aim for XMPP's technical merit and performance with Discord's ease of use and simplicity.
 - Asset management is integrated into the core host and client experience, closer to Matrix's media repository than optional XMPP extensions. Basic attachments must work on a fresh host without configuring an external service.
 - Storage backends implement a common server-side Rust trait, so new backends are easy to add. Local filesystem storage is the default backend and works without manual configuration. A host may instead configure another supported backend, initially S3-compatible object storage. Configuring a backend should be simple and must not change asset IDs or client behavior.
-- Each server belongs to exactly one host. Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
-- Remote users make application requests through their home host. Their home host makes authenticated federation requests on their behalf; clients do not call the channel host's API directly.
-- Asset bytes are an explicit exception to home-host routing, as call media is. Signed URLs and their authorization are handled up front through the home host. The owning host never sends signed URLs to clients directly; the home host delivers them over the client's persistent WebSocket connection, or over its regular HTTP API. Clients then upload and download bytes directly from the endpoints the owning host designates. Home hosts do not relay asset bytes.
+- Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
+- Asset bytes fall under the [bulk data exception](architecture.md#bulk-data-exception). Signed URLs are issued through the home host, and clients upload and download bytes directly from the endpoints the owning host designates.
 - Assets have permanent IDs that map to short-lived signed URLs, valid for about five minutes. Each user receives their own unique signed URL for rate limiting and auditing.
 - Home hosts request signed URLs automatically when fetching content that references assets. Clients can also request and refresh URLs through their home host, potentially in bulk.
-- Access is checked when signed URLs or other credentials are issued, when they are renewed, and whenever a change makes re-checking feasible. Short URL lifetimes bound how long revoked access remains usable.
 - A permanent asset ID identifies the entire logical upload, including its normalized original and every generated representation. At the bottom are immutable blobs of bytes. Intermediate structure and storage granularity depend on media type; their names, hierarchy, and database mapping are not fixed.
 - For supported media, the default **Download** action returns a standardized, broadly compatible version. **Download original** returns the metadata-normalized source without media re-encoding. Generic files without a normalized download representation use the original for Download.
 - Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
@@ -88,7 +77,6 @@ The model must support the following responsibilities without committing to inte
 
 - Make allocation, completion, and message publication idempotent. Use unique object keys and prevent a reusable upload capability from modifying published bytes, including after completion.
 - Support resumable uploads with every backend, using multipart or equivalent operations where external storage provides them. Transfer state must survive interrupted connections without requiring movie-sized files to restart from zero.
-- Authenticate peer hosts and verify that a peer host may represent the claimed user. A valid peer host identity alone does not grant asset access.
 - Keep the owning host authoritative for asset authorization. Message visibility may supply access context, but assets also need standalone grants. Precise grant types and peer host delegation rules remain open.
 - Bulk resolution groups requests by owning host and returns per-asset results. Scope authorization caches correctly; a cached URL must not authorize a different user implicitly.
 
