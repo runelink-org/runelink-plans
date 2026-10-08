@@ -15,6 +15,7 @@
 - Storage backends implement a common server-side Rust trait, so new backends are easy to add. Local filesystem storage is the default backend and works without manual configuration. A host may instead configure another supported backend, initially S3-compatible object storage. Configuring a backend should be simple and must not change asset IDs or client behavior.
 - Each server belongs to exactly one host. Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
 - Remote users make application requests through their home host. Their home host makes authenticated federation requests on their behalf; clients do not call the channel host's API directly.
+- Asset bytes are an explicit exception to home-host routing, as call media is. Signed URLs and their authorization are handled up front through the home host. The owning host never sends signed URLs to clients directly; the home host delivers them over the client's persistent WebSocket connection, or over its regular HTTP API. Clients then upload and download bytes directly from the endpoints the owning host designates. Home hosts do not relay asset bytes.
 - Assets have permanent IDs. Clients request short-lived signed download URLs through their home host, cache them, and refresh expired URLs when needed, potentially in bulk.
 - A permanent asset ID identifies the entire logical upload, including its normalized original and every generated representation. At the bottom are immutable blobs of bytes. Intermediate structure and storage granularity depend on media type; their names, hierarchy, and database mapping are not fixed.
 - For supported media, the default **Download** action returns a standardized, broadly compatible version. **Download original** returns the metadata-normalized source without media re-encoding. Generic files without a normalized download representation use the original for Download.
@@ -77,7 +78,7 @@ The model must support the following responsibilities without committing to inte
 
 1. Allocate an asset and upload session through the user's home host; forward to the channel host for channel attachments.
 2. The owning host checks permissions and quotas and returns transfer instructions with expiry and required headers.
-3. Transfer using the signed URLs returned by the configured storage backend, such as presigned object-storage operations or a host upload endpoint for local storage. Remote filesystem transfers pass through the user's home host and authenticated federation.
+3. Transfer directly using the signed URLs returned by the owning host's configured storage backend, such as presigned object-storage operations or the owning host's upload endpoint for local storage. This applies to remote users as well.
 4. Complete through the same application request path. Verify object existence, size, digest, session ownership, and actual stored content. Apply or verify required metadata normalization before publishing the immutable original.
 5. Attach the asset once its original is ready or retain it as an independently authorized asset. Derivative generation can continue after publication.
 
@@ -92,9 +93,8 @@ The model must support the following responsibilities without committing to inte
 - Return explicit URL expiry timestamps. Refresh lazily for needed assets, allow a clock-skew margin, coalesce concurrent refreshes, and use bounded retry after expiry failures.
 - Never persist expiring delivery URLs in messages or permanent asset records. Keep signatures out of logs and analytics.
 - Separate metadata, authorization, delivery-URL, and immutable-byte caches. URL expiry neither deletes cached bytes nor revokes copies already obtained.
-- Support peer host byte caching and streaming for local-storage federation. Check access before serving cached bytes.
-- A signed delivery URL may point to external storage, a CDN, or a home-host media endpoint, and clients treat all of them the same way. Passing a URL local to the owning host directly to a remote client would conflict with the home-host routing requirement.
-- Define whether direct external storage/CDN byte transfers are an exception to the all-requests-through-home-host rule. Proxying preserves the strict rule but adds bandwidth costs. This distinction applies to uploads and HLS as well as downloads.
+- A signed delivery URL may point to the owning host's external storage, CDN, or media endpoint, and clients treat all of them the same way.
+- Uploads, downloads, and HLS all transfer bytes directly between clients and those endpoints, including for remote users. Only URL issuance and authorization pass through the home host.
 - Support HTTP ranges for large files and playback. Use bounded streaming and backpressure rather than buffering whole files in the API process.
 - Renew delivery authorization during long playback and resumed downloads without restarting the media. Account for expiry of child requests as well as the initial manifest or file URL.
 
@@ -136,7 +136,7 @@ The generic-file release may serve originals as its only download. Its access co
 
 ### Open decisions
 
-- Before the generic-file implementation, settle standalone ownership/grants, direct object-storage transfer policy, metadata edit/federation semantics, and retention defaults.
+- Before the generic-file implementation, settle standalone ownership/grants, metadata edit/federation semantics, and retention defaults.
 - Define which embedded metadata to remove, which formats can be sanitized, and what happens when sanitization cannot meet the no-re-encoding requirement.
 - Decide whether original access can have different grants from preview or default-download access.
 - Decide whether thumbnails ship in the first release or the next increment.

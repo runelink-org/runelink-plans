@@ -22,6 +22,7 @@ The central architecture is established: the host that owns a voice channel mana
 - Every resource has exactly one owning host, which is authoritative for that resource.
 - Federation enables communication between hosts without distributing ownership of individual resources.
 - Clients authenticate only with their home host. End-user credentials are never shared with other hosts.
+- Bulk data, meaning call media and asset bytes, is an explicit exception to home-host routing. Home hosts handle signaling, authorization, and credential or signed URL issuance up front. Owning hosts never send credentials or signed URLs to clients directly; the home host delivers them over the client's persistent WebSocket connection, or over its regular HTTP API. Clients then transfer the data directly with endpoints designated by the owning host.
 - Requests for resources on another host are sent to the home host with a target host. The home host forwards them over federation using host-to-host requests authenticated by short-lived JWTs, which remote hosts verify against the keys published at `/.well-known/jwks.json`.
 
 ### Channels
@@ -36,18 +37,18 @@ As decided in [#37](https://github.com/runelink-org/runelink/issues/37) and bein
 
 ### Messaging and assets
 
-- Clients and hosts, and federated hosts, communicate over persistent WebSocket connections. Traffic consists of requests, replies, and push-only updates.
+- Clients and hosts, and federated hosts, communicate over persistent WebSocket connections. Traffic consists of requests, replies, and push-only updates. Clients can also use a regular HTTP API with their home host.
 - Operations are grouped into independently versioned capabilities. Each WebSocket connection negotiates them through `hello` and `welcome` envelopes, and operations whose capabilities were not negotiated remain unavailable.
 - Capabilities describe protocol compatibility, not authorization. Permissions are a separate, many-to-many policy system.
 - Message bodies are plain text by default, with optional metadata for richer content.
 - Durable content mutations and ephemeral state, such as presence ([#28](https://github.com/runelink-org/runelink/issues/28)), are modeled separately.
 - Assets are owned by a host; channel attachments are owned by the channel host. Hosts store assets through a common server-side storage backend trait, with local filesystem storage as the default and other supported backends configurable. Every backend returns compatible signed URLs, so clients do not depend on where the bytes are stored. See [Integrated asset management](integrated-asset-management.md).
-- Asset requests follow normal home-host routing. Whether clients may transfer asset bytes directly from external storage or a CDN remains open.
+- Asset requests and signed URLs go through the home host. Clients then transfer asset bytes directly with the owning host's storage endpoints.
 - Stored media may use formats such as HLS, independently of the real-time calling system.
 
 ## Media architecture
 
-Call media does not follow the home-host routing used for other federated traffic. Signaling travels from each client through its home host and federation to the voice channel's owning host, while media travels directly between each client and the SFU operated by the owning host.
+Like asset bytes, call media does not follow the home-host routing used for other federated traffic. Signaling travels from each client through its home host and federation to the voice channel's owning host, while media travels directly between each client and the SFU operated by the owning host.
 
 ### Media transport
 
@@ -64,7 +65,7 @@ Call media does not follow the home-host routing used for other federated traffi
 
 - The owning host of a voice channel operates the SFU for that channel's calls.
 - Participants connect directly to the owning host's SFU for WebRTC media, including when it is not their home host.
-- This is an explicit exception to the rule that clients communicate only with their home host. It covers call media; whether direct asset byte transfers form a similar exception is open in [Integrated asset management](integrated-asset-management.md).
+- This is the bulk data exception to the rule that clients communicate only with their home host, which also covers asset bytes. Signaling and authorization still go through the home host up front.
 - Home hosts do not relay or process their users' call media.
 - The SFU forwards media streams without decoding, mixing, or re-encoding them.
 - Clients receive the relevant audio streams and mix them locally.
@@ -178,7 +179,7 @@ These are recommendations rather than decisions.
 | --- | --- | --- |
 | SFU implementation | Which existing SFU library or framework should be used? | The host implementation, `runelink-server`, is written in Rust. |
 | SFU deployment | Should the SFU run inside the host process or as a separate service? | |
-| SFU authentication | How do clients authenticate directly with a remote owning host's SFU? | Clients authenticate only with their home host and must not present their credentials to other hosts. Federation authenticates hosts with short-lived JWTs verified through JWKS. |
+| SFU authentication | How do clients authenticate directly with a remote owning host's SFU? | Clients authenticate only with their home host and must not present their credentials to other hosts. Home hosts handle authorization up front and provide the SFU credentials their users connect with. Federation authenticates hosts with short-lived JWTs verified through JWKS. |
 | Signaling | What call lifecycle states and signaling messages should the protocol define? | Messages are request, reply, and update types under versioned capabilities. |
 | WebRTC negotiation | How are SDP negotiation, ICE candidates, and reconnection coordinated with federation? | |
 | Call membership | How are call participants tracked, and how are their media capabilities advertised? | Protocol capability negotiation describes connection compatibility, not per-participant media capabilities. |
