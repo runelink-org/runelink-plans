@@ -17,11 +17,13 @@ Runelink is an extensible, encompassing federated network. Aim for XMPP's techni
 - **Owning host:** the host that is authoritative for a resource. It may also be named for the resource, such as the **channel host** or **voice channel host**. A server channel's owning host is the host of its server. A DM channel is owned by a single host ([#24](https://github.com/runelink-org/runelink/issues/24)).
 - **Peer host:** another host participating in federation.
 - **Underlying channel:** a minimal protocol resource with a stable ID and no presentation metadata. `text_channels` contain messages; `voice_channels` contain calls and call events.
-- **Presentation channel:** a resource that gives underlying channels ownership and presentation. `server_channels` form a server's category tree, and `dm_channels` represent one-to-one and group DMs.
+- **Asset store:** a resource that holds assets, comparable to a small drive. Like underlying channels, it has a stable ID and is owned by a presentation channel.
+- **Presentation channel:** a resource that gives underlying channels and asset stores ownership and presentation. `server_channels` form a server's category tree, and `dm_channels` represent one-to-one and group DMs.
 
 ## Ownership and federation
 
 - Every resource has exactly one owning host, which is authoritative for that resource.
+- Resource IDs, such as those of messages, servers, channels, users, and assets, are implicitly tied to their owning host. Moving a resource to another host means copying it into a new resource with a new ID.
 - Federation enables communication between hosts without distributing ownership of individual resources.
 - Clients authenticate only with their home host. End-user credentials are never shared with other hosts.
 - Requests for resources on another host are sent to the home host with a target host. The home host forwards them over federation using host-to-host requests authenticated by short-lived JWTs, which remote hosts verify against the keys published at `/.well-known/jwks.json`.
@@ -42,6 +44,8 @@ As decided in [#37](https://github.com/runelink-org/runelink/issues/37) and bein
 - Text channels and voice channels are separate underlying resources with separate IDs.
 - Server channels have a `kind`. The initial kinds are `text` and `category`; server voice channels will be added as a `voice` kind that owns an underlying voice channel.
 - Each DM channel owns both an underlying text channel and an underlying voice channel. One-to-one and group calls therefore take place in the DM channel's voice channel.
+- Server text channels and DM channels each own an asset store. Other server channel kinds may own asset stores later if needed.
+- Underlying channels and asset stores are resources in their own right rather than parts of their owning presentation channel.
 - Server channel IDs remain stable regardless of their position in the category tree.
 - Categories may be nested to arbitrary depth. Presentation limits are the responsibility of clients, not the protocol.
 

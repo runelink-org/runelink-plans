@@ -6,7 +6,10 @@ This plan records the direction for integrated asset storage, delivery, and medi
 
 - Asset management is integrated into the core host and client experience, closer to Matrix's media repository than optional XMPP extensions. Basic attachments must work on a fresh host without configuring an external service.
 - Storage backends implement a common server-side Rust trait, so new backends are easy to add. Local filesystem storage is the default backend and works without manual configuration. A host may instead configure another supported backend, initially S3-compatible object storage. Configuring a backend should be simple and must not change asset IDs or client behavior.
-- Every channel has a channel host, which is the host of its server or the owning host of its DM, and **the channel host owns and pays for attachments posted into its channels**, including uploads by remote users.
+- Every asset belongs to an [asset store](architecture.md#terminology). Initially, only server text channels and DM channels own asset stores. **The asset store's owning host owns and pays for its assets**, including uploads by remote users.
+- Access to an asset follows the permissions of its asset store. Asset store permissions are similar to message permissions but separate from them, so a user may, for example, be allowed to send messages without being allowed to upload assets.
+- Asset store permissions are evaluated in the context of the owning channel or DM, just as channels inherit their category's permissions, even though the data model keeps asset stores separate.
+- Referencing an asset never grants access to it. Users who cannot read the asset store see a referenced asset as private or unauthorized, just as they would a referenced message from a channel they cannot read.
 - Asset bytes fall under the [bulk data exception](architecture.md#bulk-data-exception). Signed URLs are issued through the home host, and clients upload and download bytes directly from the endpoints the owning host designates.
 - Assets have permanent IDs that map to short-lived signed URLs, valid for about five minutes. Each user receives their own unique signed URL for rate limiting and auditing.
 - Home hosts request signed URLs automatically when fetching content that references assets. Clients can also request and refresh URLs through their home host, potentially in bulk.
@@ -15,9 +18,13 @@ This plan records the direction for integrated asset storage, delivery, and medi
 - Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
 - Home hosts request URLs from owning hosts on behalf of their users and cache them per user. One user's signed URL is never served to another user.
 - Every backend, including local storage, returns compatible signed URLs for uploads and downloads. The storage abstraction exists only on the server; clients use signed URLs the same way regardless of which backend, host endpoint, or CDN they point to.
-- Assets are first-class resources and may exist independently of messages. Their metadata is **global to the asset**, never per-message or per-use. Asset creation may happen alongside message creation without making metadata part of the message.
+- Assets are first-class resources and may exist independently of messages. Their metadata is **global to the asset**, never per-message or per-use.
+- Uploading an asset is separate from referencing it. An asset uploaded as an attachment records its uploading message in a host-managed field, and the uploading message references it the same way any other message could. The field may be backfilled after the message is published; the exact order depends on upload implementation details. Clients derive presentation differences between the uploading message and other references from that metadata, not from how the reference is made.
+- Apart from the uploading message, assets do not record which messages reference them; references are tracked on the messages' side.
+- Assets are not tied to their asset store, and asset stores are not tied to their owning resource, so either can be moved later without changing IDs. Moving an asset to another host copies it into a new asset with a new ID.
 - Standard metadata includes MIME type, description, and alt text, plus a generic JSON object for arbitrary custom metadata. Prefer the name `custom`; the exact name is not finalized.
-- Anyone permitted to edit asset metadata can view and edit all of it. The core does not reserve extension namespaces or require registered custom schemas. Extensions may namespace their own keys voluntarily.
+- Host-managed fields, such as the asset store and uploading message, are separate from editable metadata and require different permissions to change.
+- Anyone permitted to edit an asset's `custom` metadata can view and edit all of it. The core does not reserve extension namespaces or require registered custom schemas. Extensions may namespace their own keys voluntarily.
 - Store metadata in the database to support efficient queries such as filtering by MIME type. Add specialized tables where media-specific relationships and query patterns justify them.
 - The first implementation treats all assets as generic files with generic metadata. The design must accommodate image resolutions, thumbnails for multiple media types, and HLS video variants with optional multilingual audio and subtitles.
 - Media processing should work locally with FFmpeg by default. HLS processing must eventually support optionally configured compute infrastructure separate from the host's API process.
@@ -42,10 +49,10 @@ The following records the implementation approach discussed. Exact schemas, endp
 
 The model must support the following responsibilities without committing to intermediate entity names or one database row per encoded object:
 
-- Permanent asset identity, owning host, creator, global metadata, lifecycle, and metadata version.
+- Permanent asset identity, asset store, owning host, creator, global metadata, lifecycle, and metadata version.
 - Immutable stored bytes with backend locations, verified sizes, digests, and serving information.
 - Media-specific relationships, representation selection, readiness, technical properties, and processing versions.
-- Uses by messages, profiles, channels, and other resources, alongside authorization independent of those uses.
+- Asset store placement and authorization, independent of the messages that reference assets.
 - Temporary upload allocation, transfer constraints, completion state, and expiry.
 - Durable asynchronous work with attempts, leases, progress, and validated outputs.
 - Enough accounting and inventory information to authorize delivery, verify completeness, migrate storage, and reliably clean up all owned bytes.
@@ -69,15 +76,16 @@ The model must support the following responsibilities without committing to inte
 
 ### Uploads and federation
 
-1. Allocate an asset and upload session through the user's home host; forward to the channel host for channel attachments.
-2. The owning host checks permissions and quotas and returns transfer instructions with expiry and required headers.
+1. Allocate an asset and upload session in an asset store through the user's home host, which forwards the request to the asset store's owning host when needed.
+2. The owning host checks asset store permissions and quotas and returns transfer instructions with expiry and required headers.
 3. Transfer directly using the signed URLs returned by the owning host's configured storage backend, such as presigned object-storage operations or the owning host's upload endpoint for local storage. This applies to remote users as well.
 4. Complete through the same application request path. Verify object existence, size, digest, session ownership, and actual stored content. Apply or verify required metadata normalization before publishing the immutable original.
-5. Attach the asset once its original is ready or retain it as an independently authorized asset. Derivative generation can continue after publication.
+5. Publish the asset in its asset store once its original is ready. Messages, including the one it was uploaded with, may then reference it. Derivative generation can continue after publication.
 
 - Make allocation, completion, and message publication idempotent. Use unique object keys and prevent a reusable upload capability from modifying published bytes, including after completion.
 - Support resumable uploads with every backend, using multipart or equivalent operations where external storage provides them. Transfer state must survive interrupted connections without requiring movie-sized files to restart from zero.
-- Keep the owning host authoritative for asset authorization. Message visibility may supply access context, but assets also need standalone grants. Precise grant types and peer host delegation rules remain open.
+- Keep the owning host authoritative for asset authorization, which it evaluates against the asset store. Peer hosts only represent their users and gain no access of their own.
+- Asset store operations form their own versioned capabilities.
 - Bulk resolution groups requests by owning host and returns per-asset results. Scope authorization caches correctly; a cached URL must not authorize a different user implicitly.
 
 ### Delivery and caching
@@ -87,7 +95,7 @@ The model must support the following responsibilities without committing to inte
 - Separate metadata, authorization, delivery-URL, and immutable-byte caches. URL expiry neither deletes cached bytes nor revokes copies already obtained.
 - Key byte caches by asset and representation rather than by signed URL, so per-user URLs do not defeat byte caching. CDNs in front of external storage should exclude signatures from their cache keys.
 - Home hosts may serve cached remote content, such as messages from the content cache ([#26](https://github.com/runelink-org/runelink/issues/26)), before they have the requesting user's signed URLs. Send the content immediately, then push the asset-to-URL mapping to the client as an update once the owning host returns it.
-- Owning hosts may rate limit signed URL issuance per user. Local storage endpoints may also rate limit downloads; issuance is the main control for external backends that cannot limit per URL.
+- Owning hosts may rate limit signed URL issuance per user. Rate limits apply per host and user, and possibly per server later, rather than per asset store. Local storage endpoints may also rate limit downloads; issuance is the main control for external backends that cannot limit per URL.
 - A signed delivery URL may point to the owning host's external storage, CDN, or media endpoint, and clients treat all of them the same way.
 - Uploads, downloads, and HLS all transfer bytes directly between clients and those endpoints, including for remote users. Only URL issuance and authorization pass through the home host.
 - Support HTTP ranges for large files and playback. Use bounded streaming and backpressure rather than buffering whole files in the API process.
@@ -116,16 +124,18 @@ The model must support the following responsibilities without committing to inte
 
 - Ship sensible upload limits, quotas, safe download headers, temporary-file handling, and cleanup with local storage. Expose simple configuration for each supported external backend, such as bucket, region, endpoint, credentials, and compatible addressing for S3.
 - Account for original storage, generated downloads, streaming outputs, and processing costs on the owning host. Include duration, dimensions, frame rate, and track-count limits alongside upload-byte limits; bound temporary processing storage separately.
-- Keep incomplete-upload expiry separate from standalone-asset retention. **An asset without a message reference is not automatically an abandoned asset.**
-- Define retention, deletion, quarantine, reference removal, and tombstones explicitly. Garbage collection must respect standalone retention and all live uses.
+- Keep incomplete-upload expiry separate from asset retention. **An asset without a message reference is not an abandoned asset.**
+- What happens to an asset when the message it was uploaded with is deleted is configurable. The exact options remain open.
+- Deleting the channel or DM that owns an asset store deletes the store and its assets by default. Other configurable options may be considered later.
+- Define retention, deletion, quarantine, reference removal, and tombstones explicitly. Garbage collection must respect asset store retention and must not infer abandonment from message references.
 - Original retention follows the asset lifecycle, not any single message reference. Do not discard the normalized original merely because derivatives are ready. Pre-normalization uploads and obsolete generated outputs have separate cleanup policies.
-- Forwarding across channel-host ownership boundaries should create a destination-owned asset, potentially reusing verified bytes internally. Exact forwarding and retention semantics remain open.
+- Copying an asset into another asset store creates a new asset, which may reuse verified bytes internally when both stores are on the same host. Exact copying, moving, and retention semantics remain open.
 - Isolate untrusted content delivery, enforce safe MIME/disposition handling, and constrain media processors. Signing and request authentication do not make uploaded content safe to execute.
 - If end-to-end encrypted attachments are added, clients encrypt bytes and sensitive metadata and create encrypted thumbnails. Server-side plaintext transcoding cannot operate on ciphertext. Encryption support was discussed but is not a confirmed requirement here.
 
 ## Initial scope and follow-on work
 
-1. Implement generic assets, database metadata, standalone authorization, immutable original storage, required source-metadata normalization, metadata versioning, and upload lifecycle.
+1. Implement generic assets, database metadata, asset stores with store-based authorization, immutable original storage, required source-metadata normalization, metadata versioning, and upload lifecycle.
 2. Provide integrated local storage, federated uploads/downloads, and bulk signed-URL resolution with client and peer host caches.
 3. Add S3-compatible storage as the first supported external backend, with simple configuration and backend migration support that preserve asset identity and client behavior.
 4. Add durable derivative-processing jobs and thumbnails, followed by image-size variants and standardized media downloads with a separate Download original action.
@@ -135,16 +145,22 @@ The generic-file release may serve originals as its only download. Its access co
 
 ### Open decisions
 
-- Before the generic-file implementation, settle standalone ownership/grants, metadata edit/federation semantics, and retention defaults.
+- Before the generic-file implementation, settle asset store permissions, metadata edit/federation semantics, retention defaults, and the configurable behavior when an uploading message is deleted.
 - Define which embedded metadata to remove, which formats can be sanitized, and what happens when sanitization cannot meet the no-re-encoding requirement.
-- Decide whether original access can have different grants from preview or default-download access.
+- Decide whether original access can be restricted separately from preview or default-download access.
 - Decide whether thumbnails ship in the first release or the next increment.
 - Before shipping normalized media downloads, settle processing profiles, eager versus on-demand generation, and retirement of obsolete outputs.
 - Choose intermediate media structures and database granularity during media-specific implementation, informed by performance measurements.
+
+### Deferred
+
+- Asset stores for server channel kinds other than text.
+- Moving assets between asset stores.
+- Profile pictures, server icons, emoji, and similar assets. Hosts or servers will likely have separate stores for these, possibly with different permission or signing systems.
 
 ## Prior art
 
 - [Matrix content repository](https://spec.matrix.org/v1.19/client-server-api/#content-repository): integrated media IDs and authenticated downloads; useful separation between logical identifiers and delivery.
 - [Matrix federation media](https://spec.matrix.org/v1.19/server-server-api/#content-repository): media bytes or a possibly expiring storage location. Matrix advises against caching returned locations; Runelink intends explicit expiry-aware URL caching.
-- [MSC3911](https://github.com/matrix-org/matrix-spec-proposals/pull/3911): proposed media/event authorization, not stable Matrix behavior. Runelink's standalone assets require broader authorization than message links alone.
+- [MSC3911](https://github.com/matrix-org/matrix-spec-proposals/pull/3911): proposed media/event authorization, not stable Matrix behavior. Runelink authorizes assets through their asset stores rather than through message links.
 - [XMPP HTTP Upload](https://xmpp.org/extensions/xep-0363.html) and [stateless file sharing](https://xmpp.org/extensions/xep-0447.html): useful transfer allocation and file/source separation; avoid permanent delivery URLs in archived messages and optional-extension friction for basic media.
