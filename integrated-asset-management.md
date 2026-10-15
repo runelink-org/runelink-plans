@@ -15,7 +15,7 @@ This plan records the direction for integrated asset storage, delivery, and medi
 - Home hosts request signed URLs automatically when fetching content that references assets. Clients can also request and refresh URLs through their home host, potentially in bulk.
 - A permanent asset ID identifies the entire logical upload, including its normalized original and every generated representation. At the bottom are immutable blobs of bytes. Intermediate structure and storage granularity depend on media type; their names, hierarchy, and database mapping are not fixed.
 - For supported media, the default **Download** action returns a standardized, broadly compatible version. **Download original** returns the metadata-normalized source without media re-encoding. Generic files without a normalized download representation use the original for Download.
-- Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
+- **Sensitive embedded metadata, such as location, must be stripped on upload.** Leaking something like image location data would be a serious privacy failure. The generic-file implementation may skip stripping only while there are no real users beyond trusted testers; stripping must ship no later than image re-encoding. Normalize source metadata, including stripping sensitive location and capture-time fields, on the client and/or owning host. The original is the result of that normalization, not necessarily the exact uploaded bytes. Preserve it for the asset's lifetime; retaining a pre-normalization upload is not required.
 - Home hosts request URLs from owning hosts on behalf of their users and cache them per user. One user's signed URL is never served to another user.
 - Every backend, including local storage, returns compatible signed URLs for uploads and downloads. The storage abstraction exists only on the server; clients use signed URLs the same way regardless of which backend, host endpoint, or CDN they point to.
 - Assets are first-class resources and may exist independently of messages. Their metadata is **global to the asset**, never per-message or per-use.
@@ -42,7 +42,7 @@ The following records the implementation approach discussed. Exact schemas, endp
 - Store common searchable fields in typed columns. Use PostgreSQL `jsonb` for `custom`, bounded by size and nesting limits. Arbitrary custom keys need not be indexed or queryable through a general-purpose public query API.
 - Distinguish editable descriptive metadata from host-verified technical facts. Preserve declared and detected MIME types separately; use verified properties for serving and processing decisions. Keep canonical MIME types normalized and codec details separate.
 - Record technical facts for the actual representation being served. An asset can encompass several MIME types, dimensions, and codecs; the searchable asset-level MIME type should describe its normalized original rather than imply that all representations share a format.
-- Track metadata versions and use optimistic concurrency for updates. Remote metadata caches should refresh independently of URL caches.
+- Track metadata versions and use optimistic concurrency for updates. Metadata edits are pushed as normal updates to clients and peer hosts that hold copies, independently of URL caches.
 - The storage backend trait produces signed upload and download URLs with explicit expiry that behave compatibly across backends, including resumable uploads and ranged downloads. Backend-specific mechanisms, such as presigned or multipart object-storage operations, stay behind the trait and must not change client behavior. The exact trait methods remain open.
 - Record the storage backend and private key per blob. Changing the configured backend affects new uploads; existing blobs remain readable. Background migration can move bytes without changing asset IDs.
 - Internal blob deduplication and reuse across representations must not merge asset permissions or metadata.
@@ -60,7 +60,7 @@ The model must support the following responsibilities without committing to inte
 
 ### Original normalization and download behavior
 
-- Normalize sensitive embedded metadata before publishing the original. The owning host is responsible for ensuring its normalization policy has been applied, whether normalization happens on the client, owning host, or both.
+- Strip sensitive embedded metadata on upload, before publishing the original. Stripping must ship together with image re-encoding at the latest, and before Runelink has users beyond trusted testers. The owning host is responsible for ensuring its normalization policy has been applied, whether normalization happens on the client, owning host, or both.
 - Metadata normalization must not re-encode image, video, or audio content. Container or metadata rewriting may change file bytes and size without changing encoded media content.
 - Distinguish sensitive capture dates and location timestamps from timing required for playback, synchronization, and subtitles. Preserve interpretation information such as orientation, color profiles, and HDR signaling when needed to display unchanged media correctly.
 - Embedded file metadata is separate from editable asset descriptions, alt text, and `custom`. Removing embedded fields does not remove those database fields.
@@ -125,7 +125,8 @@ The model must support the following responsibilities without committing to inte
 - Ship sensible upload limits, quotas, safe download headers, temporary-file handling, and cleanup with local storage. Expose simple configuration for each supported external backend, such as bucket, region, endpoint, credentials, and compatible addressing for S3.
 - Account for original storage, generated downloads, streaming outputs, and processing costs on the owning host. Include duration, dimensions, frame rate, and track-count limits alongside upload-byte limits; bound temporary processing storage separately.
 - Keep incomplete-upload expiry separate from asset retention. **An asset without a message reference is not an abandoned asset.**
-- What happens to an asset when the message it was uploaded with is deleted is configurable. The exact options remain open.
+- Assets are retained indefinitely by default. Retention configuration may be added after the initial implementation.
+- By default, deleting the message an asset was uploaded with also deletes the asset. Configuration for this behavior may be added after the initial implementation.
 - Deleting the channel or DM that owns an asset store deletes the store and its assets by default. Other configurable options may be considered later.
 - Define retention, deletion, quarantine, reference removal, and tombstones explicitly. Garbage collection must respect asset store retention and must not infer abandonment from message references.
 - Original retention follows the asset lifecycle, not any single message reference. Do not discard the normalized original merely because derivatives are ready. Pre-normalization uploads and obsolete generated outputs have separate cleanup policies.
@@ -135,25 +136,25 @@ The model must support the following responsibilities without committing to inte
 
 ## Initial scope and follow-on work
 
-1. Implement generic assets, database metadata, asset stores with store-based authorization, immutable original storage, required source-metadata normalization, metadata versioning, and upload lifecycle.
+1. Implement generic assets, database metadata, asset stores with store-based authorization, immutable original storage, metadata versioning, and upload lifecycle.
 2. Provide integrated local storage, federated uploads/downloads, and bulk signed-URL resolution with client and peer host caches.
 3. Add S3-compatible storage as the first supported external backend, with simple configuration and backend migration support that preserve asset identity and client behavior.
-4. Add durable derivative-processing jobs and thumbnails, followed by image-size variants and standardized media downloads with a separate Download original action.
+4. Add durable derivative-processing jobs, **required sensitive-metadata stripping**, and image re-encoding, with thumbnails added at the same time or immediately after, followed by image-size variants and standardized media downloads with a separate Download original action.
 5. Add adaptive video playback, HLS delivery authorization, multilingual audio/subtitles, movie-length processing and transfer support, and optional external compute.
 
 The generic-file release may serve originals as its only download. Its access contract must accommodate purpose-based resolution and independent processing states so later media support can provide the normalized default-download experience.
 
 ### Open decisions
 
-- Before the generic-file implementation, settle asset store permissions, metadata edit/federation semantics, retention defaults, and the configurable behavior when an uploading message is deleted.
-- Define which embedded metadata to remove, which formats can be sanitized, and what happens when sanitization cannot meet the no-re-encoding requirement.
+- Define which embedded metadata to remove, which formats can be sanitized, and what happens when sanitization cannot meet the no-re-encoding requirement. Stripping sensitive metadata on upload is required no later than image re-encoding; only the specifics are open.
 - Decide whether original access can be restricted separately from preview or default-download access.
-- Decide whether thumbnails ship in the first release or the next increment.
 - Before shipping normalized media downloads, settle processing profiles, eager versus on-demand generation, and retirement of obsolete outputs.
 - Choose intermediate media structures and database granularity during media-specific implementation, informed by performance measurements.
 
 ### Deferred
 
+- The exact set of asset store permissions.
+- Retention configuration and configurable asset behavior when the uploading message is deleted.
 - Asset stores for server channel kinds other than text.
 - Moving assets between asset stores.
 - Profile pictures, server icons, emoji, and similar assets. Hosts or servers will likely have separate stores for these, possibly with different permission or signing systems.

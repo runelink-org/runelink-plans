@@ -69,3 +69,4 @@ As decided in [#37](https://github.com/runelink-org/runelink/issues/37) and bein
 - Capabilities describe protocol compatibility, not authorization. Permissions are a separate, many-to-many policy system.
 - Message bodies are plain text by default, with optional metadata for richer content.
 - Durable content mutations and ephemeral state, such as presence ([#28](https://github.com/runelink-org/runelink/issues/28)), are modeled separately.
+- Durable state is always kept in sync. Changes are pushed as normal updates to clients and peer hosts that hold copies, rather than relying on cache expiry.
