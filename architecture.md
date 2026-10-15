@@ -4,6 +4,7 @@ This document records the shared terminology and architecture that Runelink plan
 
 - [Integrated asset management](integrated-asset-management.md)
 - [Voice and video calling](voice-and-video-calling.md)
+- [User lookup and account transfers](user-lookup-and-account-transfers.md)
 
 ## Direction
 
@@ -25,6 +26,7 @@ Runelink is an extensible, encompassing federated network. Aim for XMPP's techni
 - Every resource has exactly one owning host, which is authoritative for that resource.
 - Resource IDs, such as those of messages, servers, channels, users, and assets, are implicitly tied to their owning host. Moving a resource to another host means copying it into a new resource with a new ID.
 - Federation enables communication between hosts without distributing ownership of individual resources.
+- A `UserRef` always names the user's real home host. Resolving a `UserRef` to the host to contact is a separate step, so [account transfers](user-lookup-and-account-transfers.md) can redirect it later.
 - Clients authenticate only with their home host. End-user credentials are never shared with other hosts.
 - Requests for resources on another host are sent to the home host with a target host. The home host forwards them over federation using host-to-host requests authenticated by short-lived JWTs, which remote hosts verify against the keys published at `/.well-known/jwks.json`.
 - Owning hosts verify that a peer host may represent the user it claims to act for. A valid peer host identity alone grants no access to resources.
