@@ -27,7 +27,7 @@ This plan records the direction for integrated asset storage, delivery, and medi
 - Anyone permitted to edit an asset's `custom` metadata can view and edit all of it. The core does not reserve extension namespaces or require registered custom schemas. Extensions may namespace their own keys voluntarily.
 - Store metadata in the database to support efficient queries such as filtering by MIME type. Add specialized tables where media-specific relationships and query patterns justify them.
 - The first implementation treats all assets as generic files with generic metadata. The design must accommodate image resolutions, thumbnails for multiple media types, and HLS video variants with optional multilingual audio and subtitles.
-- Media processing should work locally with FFmpeg by default. HLS processing must eventually support optionally configured compute infrastructure separate from the host's API process.
+- Media processing and media delivery are [compute services](architecture.md#compute-services). Processing works locally with FFmpeg by default, and both must eventually support separately deployed infrastructure.
 - Video support must accommodate full-length movies, including resumable large transfers, durable background processing, seeking, and uninterrupted authorization renewal during long playback.
 
 ## Proposed implementation shape

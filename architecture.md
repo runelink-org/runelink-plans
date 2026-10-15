@@ -37,6 +37,17 @@ Runelink is an extensible, encompassing federated network. Aim for XMPP's techni
 - Access is checked when credentials or signed URLs are issued, when they are renewed, and whenever a change makes re-checking feasible, such as reconnecting to a call. Short lifetimes bound how long revoked access remains usable.
 - Each plan defines its own credentials: signed URLs for assets and join tokens for the SFU.
 
+## Compute services
+
+- Heavy compute and bandwidth workloads, such as the SFU, TURN relaying, media processing, and media delivery, are services that can run separately from the main host process.
+- By default, every service runs locally, managed by the single `runelink-server` binary. A self-hoster can run one binary on a VPS and have everything work without further configuration.
+- Larger deployments may run services separately, keeping the main host process a lightweight, high-concurrency gateway for the API, federation, signaling, and authorization.
+- Where practical, local services run as child processes or threads that use the same internal API as separately deployed services. Local and remote compute then differ mainly in where a service runs, so each service needs only one internal API to maintain.
+- Running a service separately must not change protocol behavior, client behavior, or resource IDs.
+- Separately deployed services receive scoped, short-lived credentials for the work they perform rather than unrestricted database or storage access.
+- The owning host operates and pays for the services that handle its resources, whether they run locally or separately.
+- The initial implementation runs all services locally. Separate deployment and orchestration are planned for later. Because local services already use the internal API, separating them later mainly adds deployment, discovery, and orchestration rather than rewriting services.
+
 ## Channels
 
 As decided in [#37](https://github.com/runelink-org/runelink/issues/37) and being implemented in [#30](https://github.com/runelink-org/runelink/issues/30):

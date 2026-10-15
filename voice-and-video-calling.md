@@ -29,6 +29,7 @@ Call media falls under the [bulk data exception](architecture.md#bulk-data-excep
 **Decision:** Use a centralized SFU model.
 
 - The owning host of a voice channel operates the SFU for that channel's calls.
+- The SFU is a [compute service](architecture.md#compute-services). It runs in the host process by default and may run separately in larger deployments.
 - Participants connect directly to the owning host's SFU for WebRTC media, including when it is not their home host.
 - Clients join the SFU with short-lived, single-use join tokens obtained through their home host. Access is checked when a token is issued and re-checked on every reconnect, which requires a new token.
 - Once a participant is connected, the owning host's SFU session is authoritative. The owning host removes participants immediately when they lose access to the call.
@@ -143,8 +144,8 @@ These are recommendations rather than decisions.
 
 | Area | Open question | Existing constraints |
 | --- | --- | --- |
-| SFU implementation | Which existing SFU library or framework should be used? | The host implementation, `runelink-server`, is written in Rust. |
-| SFU deployment | Should the SFU run inside the host process or as a separate service? | |
+| SFU implementation | Which existing SFU library or framework should be used? | The host implementation, `runelink-server`, is written in Rust. The SFU must be embeddable in the host process and separable later. |
+| SFU deployment | How do separately deployed SFUs register with their host, and how are calls assigned to them? | Separate deployment follows the initial local implementation. |
 | SFU authentication | How do clients authenticate directly with a remote owning host's SFU? | Clients authenticate only with their home host and must not present their credentials to other hosts. Home hosts handle authorization up front and provide the SFU credentials their users connect with. Federation authenticates hosts with short-lived JWTs verified through JWKS. |
 | Signaling | What call lifecycle states and signaling messages should the protocol define? | Messages are request, reply, and update types under versioned capabilities. |
 | WebRTC negotiation | How are SDP negotiation, ICE candidates, and reconnection coordinated with federation? | |
@@ -156,6 +157,6 @@ These are recommendations rather than decisions.
 | SIP interoperability | What is the standard adapter interface, particularly for outbound and inbound PSTN calls? | |
 | Adapter ownership | How does an external gateway join calls owned by another host without owning the channel? | |
 | Reliability | What happens when a host, SFU, or network connection fails during a call? | |
-| Network traversal | How are STUN and TURN services deployed, and who pays for TURN bandwidth? | |
+| Network traversal | How are STUN and TURN provided, and is TURN needed in the initial implementation? | TURN is a compute service paid for by the voice channel's owning host. |
 | Encryption | Is WebRTC transport encryption sufficient initially, or should end-to-end media encryption be supported? | |
 | Call behavior | Are server voice channels persistent rooms that users join and leave, and do ringing semantics apply only to DM calls? | Server voice channels and DM channels each own an underlying voice channel. |
