@@ -5,6 +5,7 @@ This document records the shared terminology and architecture that Runelink plan
 - [Integrated asset management](integrated-asset-management.md)
 - [Voice and video calling](voice-and-video-calling.md)
 - [User lookup and account transfers](user-lookup-and-account-transfers.md)
+- [AI agent harness](ai-agent-harness.md)
 
 ## Direction
 
