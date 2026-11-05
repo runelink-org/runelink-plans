@@ -90,7 +90,7 @@ Human users might have read-only access to these internal memory resources by de
 
 ### 1.6. Vector Search and Memory Retrieval
 
-Vector embeddings and semantic retrieval are likely to be major parts of the memory research. Runelink needs basic message retrieval operations such as text search, date filtering, offsets, and counts, which are planned to be added before January (§5.1). We want to explore more advanced retrieval methods without making them mandatory parts of the general Runelink protocol.
+Vector embeddings and semantic retrieval are likely to be major parts of the memory research. Runelink needs basic message retrieval operations such as text search, date filtering, offsets, and counts, which are planned to be added before January (§5). We want to explore more advanced retrieval methods without making them mandatory parts of the general Runelink protocol.
 
 The current preferred approach is to implement additional memory operations through a custom Runelink capability in the agent's host implementation. This could include embedding storage and vector search, potentially alongside other retrieval methods. The capability could initially be used only internally. Using Runelink's capability architecture would make it possible to expose these operations externally in the future without requiring them to become part of the public standardized protocol.
 
@@ -182,7 +182,7 @@ The harness would use read receipts to track which events have been handled, mea
 
 ### 1.11. Tool Invocation Persistence
 
-We discussed using Runelink messages to record tool invocations. Runelink messages can contain JSON text, and the message metadata required before January (§5.1) would identify the purpose and structure of that content. A tool invocation could therefore be stored as a structured message before its execution begins, and a separate result message could refer back to the invocation.
+We discussed using Runelink messages to record tool invocations. Runelink messages can contain JSON text, and the message metadata required before January (§5) would identify the purpose and structure of that content. A tool invocation could therefore be stored as a structured message before its execution begins, and a separate result message could refer back to the invocation.
 
 This resembles a write-ahead log. One benefit is that after a crash, the harness could discover that a tool had been invoked even if its result was never recorded.
 
@@ -200,7 +200,7 @@ A missing result would not prove that an operation never executed. The tool migh
 - Employing idempotency mechanisms where possible.
 - Defining recovery behavior for particular tools.
 
-One simple option for the invocation identifier is the message ID of the agent's tool invocation, which also makes it easy for the model to query the status of that exact request. Because the host assigns message IDs, a lost reply can leave the harness unsure whether its invocation was written, so retries need a way to avoid duplicate messages. The current preference is an idempotency key enforced by the host, though this isn't final (§5.1).
+One simple option for the invocation identifier is the message ID of the agent's tool invocation, which also makes it easy for the model to query the status of that exact request. Because the host assigns message IDs, a lost reply can leave the harness unsure whether its invocation was written, so retries need a way to avoid duplicate messages. The current preference is an idempotency key enforced by the host, though this isn't final (§5).
 
 We have not committed to implementing exactly-once execution guarantees or a particular recovery protocol. The main idea is that a persisted invocation provides information that can help the agent or harness recover from ambiguous execution states.
 
@@ -408,53 +408,4 @@ Longer term, this could evolve into an agent harness that supports independently
 
 ## 5. Runelink Work Before January 2027
 
-This is the core Runelink work to prioritize before the semester project starts. It assumes that the harness, which will be written in Rust, initially uses a single co-located host. Issues for items without one will be created once this plan is refined.
-
-### 5.1. Required
-
-- **WebSocket support in `runelink-client`:** Capability negotiation, request and reply matching, pushed updates, and reconnecting. It should be a public Rust SDK for embedding in the harness, bots, the TUI, and potentially mobile apps, so it must not contain daemon or platform concerns such as desktop notifications.
-    - **Issue needed** (blocks [#70](https://github.com/runelink-org/runelink/issues/70))
-- **Message metadata:** Optional structured metadata on messages, identifying the purpose and format of their content, and editable along with the message. Tool invocation records and trigger channels depend on this.
-    - **Issue needed**
-- **Incremental message fetching:** Paginated fetching so the harness can retrieve long channel histories without loading them whole.
-    - [#34](https://github.com/runelink-org/runelink/issues/34)
-- **Catch-up after disconnects:** A way to fetch everything after a known position, so the harness and other clients can recover updates missed while disconnected.
-    - **Issue needed** (blocked by message text search and retrieval filters)
-- **Idempotent message creation:** An optional idempotency key on `NewMessage`, separate from metadata and unique per author, so that retrying after a lost reply returns the original message instead of creating a duplicate. This is the current preference, not a final decision, so the issue should keep the alternatives open: looking up a harness-generated metadata key before retrying, which is only safe with a single writer and can miss a write still in flight; client-generated message IDs; and allowing duplicates with deduplication by the tool server. How long keys are kept is also an open question for the issue.
-    - **Issue needed**
-- **Message text search and retrieval filters:** Text search, date filters, offsets, limits, and counts. A baseline for comparison with vector search, and generic enough to belong in core.
-    - **Issue needed**
-- **Role-based permissions:** Different access for the harness's admin user, agent users, the tool server's user, and human users, so that less capable or confused agents can't accidentally break the structures the harness depends on (§1.3, §1.5).
-    - [#31](https://github.com/runelink-org/runelink/issues/31)
-- **Read receipts:** Durable read positions, so the harness can track which events it has handled and recover after a crash (§1.10). How positions stay reliable, given that message IDs are random and `created_at` isn't commit order, is an open question for the issue.
-    - **Issue needed**
-
-### 5.2. Should have
-
-- **Server-side extension points:** A way for the fork to add capability handlers and index messages when they are created or edited, keeping the fork small. This should not wait for the composable data layer, which is blocked by the actor pattern work.
-    - **Issue needed**
-    - Related: [#32](https://github.com/runelink-org/runelink/issues/32), [#17](https://github.com/runelink-org/runelink/issues/17)
-- **End-to-end tests:** Tests built on the Rust client SDK, so regressions in core don't surface during harness experiments.
-    - [#70](https://github.com/runelink-org/runelink/issues/70), blocked by the WebSocket client
-- **Actor pattern:** A solid base for the semester project work.
-    - [#17](https://github.com/runelink-org/runelink/issues/17)
-- **Direct messages:** One way to activate an agent through its Runelink account (§1.13).
-    - [#24](https://github.com/runelink-org/runelink/issues/24)
-- **Scoped event subscriptions:** Lets the harness and tool server subscribe to only the updates they need, rather than filtering everything themselves.
-    - [#48](https://github.com/runelink-org/runelink/issues/48), blocked by [#17](https://github.com/runelink-org/runelink/issues/17) and [#31](https://github.com/runelink-org/runelink/issues/31)
-
-### 5.3. Optional
-
-- **Asset management:** Useful for agent documents and possibly large execution checkpoints.
-    - [#9](https://github.com/runelink-org/runelink/issues/9)
-- **Unattended authentication:** Better credentials for bots and agents. The existing password and refresh token flow is enough to start.
-    - [#4](https://github.com/runelink-org/runelink/issues/4), [#41](https://github.com/runelink-org/runelink/issues/41)
-
-### 5.4. Not needed before January
-
-The harness can work around these initially, even where it would eventually use them:
-
-- **Client daemon and TUI:** The harness embeds the client library directly, so only the boundary between the library and the daemon needs to be settled early.
-    - **Issue needed**
-- **Notifications and mobile push:** Not relevant to the harness.
-    - [#29](https://github.com/runelink-org/runelink/issues/29)
+The core Runelink work to prioritize before the semester project starts is listed in the [tracking issue for agent harness dependencies (#91)](https://github.com/runelink-org/runelink/issues/91). It assumes that the harness, which will be written in Rust, initially uses a single co-located host.
